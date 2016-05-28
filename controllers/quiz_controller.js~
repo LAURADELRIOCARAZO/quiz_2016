@@ -3,146 +3,83 @@ var models = require('../models');
 var Sequelize = require('sequelize');
 var cloudinary = require('cloudinary');
 var fs = require('fs');
-var url = require('url');
-var paginate = require('./paginate').paginate;
 
 
 // Opciones para imagenes subidas a Cloudinary
 var cloudinary_image_options = { crop: 'limit', width: 200, height: 200, radius: 5, 
-                                 border: "3px_solid_blue", tags: ['core', 'quiz-2016'] };
+                                 
 
 
 // Autoload el quiz asociado a :quizId
 exports.load = function(req, res, next, quizId) {
 	models.Quiz.findById(quizId, { include: [ models.Comment, models.Attachment ] })
   		.then(function(quiz) {
-      		if (quiz) {
-        		req.quiz = quiz;
-        		next();
-      		} else { 
-      			throw new Error('No existe quizId=' + quizId);
-      		}
-        })
-        .catch(function(error) { next(error); });
-};
+				if (quiz) {
+						req.quiz = quiz;
+						next();
+					} else { 
+						throw new Error('No existe quizId=' + quizId);
+					}
+				})
+				.catch(function(error) { next(error); });
+ };
+
 
 
 // MW que permite acciones solamente si al usuario logeado es admin o es el autor del quiz.
 exports.ownershipRequired = function(req, res, next){
 
     var isAdmin      = req.session.user.isAdmin;
-    var quizAuthorId = req.quiz.AuthorId;
-    var loggedUserId = req.session.user.id;
+		var quizAuthorId = req.quiz.AuthorId;
+		var loggedUserId = req.session.user.id;
 
-    if (isAdmin || quizAuthorId === loggedUserId) {
-        next();
-    } else {
-      console.log('Operación prohibida: El usuario logeado no es el autor del quiz, ni un administrador.');
-      res.send(403);
-    }
+   if (isAdmin || quizAuthorId === loggedUserId) {
+				next();
+	} else {
+			console.log('Operación prohibida: El usuario logeado no es el autor del quiz, ni un administrador.');
+			res.send(403);
+		}
 };
 
 
 // GET /quizzes
 exports.index = function(req, res, next) {
 
-    var options = {};
-    var title = "Preguntas";
-
-    // Solo los Quizzes de un autor.
-    if (req.user) {
-        options.where = {AuthorId: req.user.id};
-        title = "Mis Preguntas";
-    }
-
-    models.Quiz.count(options)
-    .then(function(count) {
-
-        options.include = [ models.Attachment ];
-
-        // Para usuarios logeados: incluir los fans de las preguntas.
-        if (req.session.user) {
-            options.include.push({ model: models.User, as: 'Fans' });
-        }
-
-        // Paginacion:
-
-        var items_per_page = 6;
-
-        // La pagina a mostrar viene en la query
-        var pageno = parseInt(req.query.pageno) || 1;
-
-        // Datos para obtener el rango de datos a buscar en la BBDD.
-        var pagination = {
-            offset: items_per_page * (pageno - 1),
-            limit: items_per_page
-        };
-
-        // Crear un string con el HTML que pinta la botonera de paginacion.
-        // Lo añado como una variable local de res para que lo pinte el layout de la aplicacion.
-        res.locals.paginate_control = paginate(count, items_per_page, pageno, req.url);
-
-        return pagination;
-    })
-    .then(function(pagination) {
-
-        options.offset = pagination.offset;
-        options.limit  = pagination.limit;
-var aux = (req.query.search !== undefined)? req.query.search : "";
-	
-        return models.Quiz.findAll({where: {question: {$like: "%"+aux"%"}}});
+    
         
-    })
-	.then(function(quizzes) {
+var search = req.query.search || "";
+	search = search.replace(" ","%");
+	var format = req.params.format || "html";
 
-        // Para usuarios logeados:
-        //   Añado a todos los quizzes un atributo booleano llamado "favourite"
-        //   que indica si el quiz es uno de mis favoritos o no. 
-        if (req.session.user) {
-
-            quizzes.forEach(function(quiz) {
-                quiz.favourite = quiz.Fans.some(function(fan) {
-                    return fan.id == req.session.user.id;
-                });
-            });
-        } 
-
-		res.render('quizzes/index.ejs', {quizzes: quizzes,
-                                         title: title});
-	})
-	.catch(function(error) {
-		next(error);
-	});
-};
+	models.Quiz.findAll({
+							where: {question: {$like: "%" + search + "%"}},
+							include: [ {model: models.Attachment}]
+						})
+		.then(function(quizzes) {
+			if (format==="json"){
+				res.json({ quizzes: quizzes});
+			}else{
+				res.render('quizzes/index.ejs', { quizzes: quizzes});
+			}
+		})
+		.catch(function(error) {
+			next(error);
+		});
+        
 
 
 // GET /quizzes/:quizId
 exports.show = function(req, res, next) {
 
 	var answer = req.query.answer || '';
+var format = req.params.format || "html";
+    
+if (format==="json"){
+		res.json({quiz: req.quiz, answer: answer});
+	}else{
+		res.render('quizzes/show', {quiz: req.quiz, answer: answer});
+	}
 
-    // Para usuarios logeados:
-    //   Si el quiz es uno de mis favoritos, creo un atributo llamado
-    //   "favourite" con el valor true.
-    if (req.session.user) {
-
-        req.quiz.getFans({where: {id: req.session.user.id}})
-            .then(function(fans) {
-                if (fans.length > 0) {
-                    req.quiz.favourite = true
-                }      
-            })
-            .then(function() {
-                res.render('quizzes/show', { quiz: req.quiz,
-                                             answer: answer});
-            })
-            .catch(function(error){
-                next(error);
-            });
-    } else {
-        res.render('quizzes/show', {quiz: req.quiz,
-                                    answer: answer});
-    }
 };
 
 
